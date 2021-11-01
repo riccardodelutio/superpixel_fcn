@@ -18,14 +18,6 @@ import datetime
 from tensorboardX import SummaryWriter
 from train_util import *
 
-'''
-Main code for training 
-
-author: Fengting 
-Last modification: March 8th, 2019
-'''
-
-
 
 model_names = sorted(name for name in models.__dict__
                      if not name.startswith("__"))
@@ -43,10 +35,10 @@ parser.add_argument('--data', metavar='DIR',default='', help='path to input data
 parser.add_argument('--savepath',default='', help='path to save ckpt')
 
 
-parser.add_argument('--train_img_height', '-t_imgH', default=208,  type=int, help='img height')
-parser.add_argument('--train_img_width', '-t_imgW', default=208, type=int, help='img width')
-parser.add_argument('--input_img_height', '-v_imgH', default=320, type=int, help='img height_must be 16*n')  #
-parser.add_argument('--input_img_width', '-v_imgW', default=320,  type=int, help='img width must be 16*n')
+parser.add_argument('--train_img_height', '-t_imgH', default=256,  type=int, help='img height')
+parser.add_argument('--train_img_width', '-t_imgW', default=256, type=int, help='img width')
+parser.add_argument('--input_img_height', '-v_imgH', default=256, type=int, help='img height_must be 16*n')  #
+parser.add_argument('--input_img_width', '-v_imgW', default=256,  type=int, help='img width must be 16*n')
 
 # ======== learning schedule ================
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',help='number of data loading workers')
@@ -67,6 +59,7 @@ parser.add_argument('--additional_step', default= 100000, help='the additional i
 # ============== hyper-param ====================
 parser.add_argument('--pos_weight', '-p_w', default=0.003, type=float, help='weight of the pos term')
 parser.add_argument('--downsize', default=16, type=float,help='grid cell size for superpixel training ')
+parser.add_argument('--nspx', default=256, type=int,help='number of superpixels')
 
 # ================= other setting ===================
 parser.add_argument('--gpu', default= '0', type=str, help='gpu id')
@@ -270,7 +263,7 @@ def train(train_loader, model, optimizer, epoch, train_writer, init_spixl_map_id
         # ========== predict association map ============
         output = model(input_gpu)
         slic_loss, loss_sem, loss_pos = compute_semantic_pos_loss( output, LABXY_feat_tensor,
-                                                                pos_weight= args.pos_weight, kernel_size=args.downsize)
+                                                                pos_weight= args.pos_weight, kernel_size=int(np.sqrt(args.nspx)))
 
         # ========= back propagate ===============
         optimizer.zero_grad()
@@ -361,7 +354,7 @@ def validate(val_loader, model, epoch, val_writer, init_spixl_map_idx, xy_feat):
         with torch.no_grad():
             output = model(input_gpu)
             slic_loss, loss_sem, loss_pos = compute_semantic_pos_loss(output, LABXY_feat_tensor,
-                                        pos_weight=args.pos_weight, kernel_size=args.downsize)
+                                        pos_weight=args.pos_weight, kernel_size=int(np.sqrt(args.nspx)))
 
         # measure elapsed time
         torch.cuda.synchronize()

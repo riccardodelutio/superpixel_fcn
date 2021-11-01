@@ -14,22 +14,16 @@ def init_spixel_grid(args,  b_train=True):
     else:
         img_height, img_width = args.input_img_height, args.input_img_width
 
-    # get spixel id for the final assignment
-    n_spixl_h = int(np.floor(img_height/args.downsize))
-    n_spixl_w = int(np.floor(img_width/args.downsize))
+    nspx = args.nspx
+    n_spx_sqrt = int(np.sqrt(nspx))
+    # get spixel id
+    n_spx_dim = np.int32(np.floor(np.array([img_height, img_width]) / n_spx_sqrt))
 
-    spixel_height = int(img_height / (1. * n_spixl_h))
-    spixel_width = int(img_width / (1. * n_spixl_w))
-
-    spix_values = np.int32(np.arange(0, n_spixl_w * n_spixl_h).reshape((n_spixl_h, n_spixl_w)))
+    spix_values = np.int32(np.arange(0, nspx).reshape((n_spx_sqrt,n_spx_sqrt)))
     spix_idx_tensor_ = shift9pos(spix_values)
 
-    spix_idx_tensor =  np.repeat(
-        np.repeat(spix_idx_tensor_, spixel_height,axis=1), spixel_width, axis=2)
-
-    torch_spix_idx_tensor = torch.from_numpy(
-                np.tile(spix_idx_tensor, (args.batch_size, 1, 1, 1))).type(torch.float).cuda()
-
+    spix_idx_tensor = np.repeat(np.repeat(spix_idx_tensor_, n_spx_dim[0], axis=1), n_spx_dim[1], axis=2)
+    torch_spix_idx_tensor = torch.from_numpy(np.tile(spix_idx_tensor, (args.batch_size, 1, 1, 1))).long().cuda()
 
     curr_img_height = int(np.floor(img_height))
     curr_img_width = int(np.floor(img_width))
@@ -212,6 +206,8 @@ def update_spixl_map (spixl_map_idx_in, assig_map_in):
     assig_max,_ = torch.max(assig_map, dim=1, keepdim= True)
     assignment_ = torch.where(assig_map == assig_max, torch.ones(assig_map.shape).cuda(),torch.zeros(assig_map.shape).cuda())
     new_spixl_map_ = spixl_map_idx * assignment_ # winner take all
+
+    print(spixl_map_idx[0,:,155,155],assignment_[0,:,155,155],new_spixl_map_[0,:,155,155])
     new_spixl_map = torch.sum(new_spixl_map_,dim=1,keepdim=True).type(torch.int)
 
     return new_spixl_map
@@ -244,22 +240,22 @@ def get_spixel_image(given_img, spix_index, n_spixels = 600, b_enforce_connect =
     return (cur_max*spixel_bd_image).astype(np.float32).transpose(2,0,1), spix_index_np #
 
 # ============ accumulate Q =============================
-def spixlIdx(args, b_train = False):
-    # code modified from ssn
-    if b_train:
-        n_spixl_h = int(np.floor(args.train_img_height / args.downsize))
-        n_spixl_w = int(np.floor(args.train_img_width / args.downsize))
-    else:
-        n_spixl_h = int(np.floor(args.input_img_height / args.downsize))
-        n_spixl_w = int(np.floor(args.input_img_width / args.downsize))
+# def spixlIdx(args, b_train = False):
+#     # code modified from ssn
+#     if b_train:
+#         n_spixl_h = int(np.floor(args.train_img_height / args.downsize))
+#         n_spixl_w = int(np.floor(args.train_img_width / args.downsize))
+#     else:
+#         n_spixl_h = int(np.floor(args.input_img_height / args.downsize))
+#         n_spixl_w = int(np.floor(args.input_img_width / args.downsize))
 
-    spix_values = np.int32(np.arange(0, n_spixl_w * n_spixl_h).reshape((n_spixl_h, n_spixl_w)))
-    spix_idx_tensor = shift9pos(spix_values)
+#     spix_values = np.int32(np.arange(0, n_spixl_w * n_spixl_h).reshape((n_spixl_h, n_spixl_w)))
+#     spix_idx_tensor = shift9pos(spix_values)
 
-    torch_spix_idx_tensor = torch.from_numpy(
-        np.tile(spix_idx_tensor, (args.batch_size, 1, 1, 1))).type(torch.float).cuda()
+#     torch_spix_idx_tensor = torch.from_numpy(
+#         np.tile(spix_idx_tensor, (args.batch_size, 1, 1, 1))).type(torch.float).cuda()
 
-    return torch_spix_idx_tensor
+#     return torch_spix_idx_tensor
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -347,7 +343,6 @@ def label2one_hot_torch(labels, C=14):
     # w.r.t http://jacobkimmel.github.io/pytorch_onehot/
     '''
         Converts an integer label torch.autograd.Variable to a one-hot Variable.
-
         Parameters
         ----------
         labels : torch.autograd.Variable of torch.cuda.LongTensor
@@ -355,7 +350,6 @@ def label2one_hot_torch(labels, C=14):
             Each value is an integer representing correct classification.
         C : integer.
             number of classes in labels.
-
         Returns
         -------
         target : torch.cuda.FloatTensor
@@ -366,4 +360,3 @@ def label2one_hot_torch(labels, C=14):
     target = one_hot.scatter_(1, labels.type(torch.long).data, 1) #require long type
 
     return target.type(torch.float32)
-
