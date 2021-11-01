@@ -2,6 +2,7 @@ import argparse
 import os
 import shutil
 import time
+import wandb
 
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -37,8 +38,8 @@ parser.add_argument('--savepath',default='', help='path to save ckpt')
 
 parser.add_argument('--train_img_height', '-t_imgH', default=256,  type=int, help='img height')
 parser.add_argument('--train_img_width', '-t_imgW', default=256, type=int, help='img width')
-parser.add_argument('--input_img_height', '-v_imgH', default=256, type=int, help='img height_must be 16*n')  #
-parser.add_argument('--input_img_width', '-v_imgW', default=256,  type=int, help='img width must be 16*n')
+parser.add_argument('--input_img_height', '-v_imgH', default=320, type=int, help='img height_must be 16*n')  #
+parser.add_argument('--input_img_width', '-v_imgW', default=320,  type=int, help='img width must be 16*n')
 
 # ======== learning schedule ================
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',help='number of data loading workers')
@@ -68,6 +69,8 @@ parser.add_argument('--record_freq', '-rf', default=5, type=int,  help='record f
 parser.add_argument('--label_factor', default=5, type=int, help='constant multiplied to label index for viz.')
 parser.add_argument('--pretrained', dest='pretrained', default=None, help='path to pre-trained model')
 parser.add_argument('--no-date', action='store_true',  help='don\'t append date timestamp to folder' )
+
+parser.add_argument('--wandb', help="Use Weights & Biases instead of TensorBoard", type=bool, default=False)
 
 
 
@@ -102,6 +105,12 @@ def main():
     else:
         timestamp = ''
     save_path = os.path.abspath(args.savepath) + '/' + os.path.join(args.dataset, save_path  +  '_' + timestamp )
+
+    if args.wandb:
+        wandb.init(project='spx-fcn', dir=save_path)
+        wandb.config.update(args)
+
+
 
     # ==========  Data loading code ==============
     input_transform = transforms.Compose([
@@ -144,6 +153,8 @@ def main():
     val_loader = torch.utils.data.DataLoader(
         val_set, batch_size=args.batch_size,
         num_workers=args.workers, pin_memory=True, shuffle=False, drop_last=True)
+
+    epoch_size =  len(train_loader)
 
     # ============== create model ====================
     if args.pretrained:
@@ -196,14 +207,19 @@ def main():
         train_avg_slic, train_avg_sem, iteration = train(train_loader, model, optimizer, epoch,
                                                          train_writer, spixelID, XY_feat_stack )
         if epoch % args.record_freq == 0:
-            train_writer.add_scalar('Mean avg_slic', train_avg_slic, epoch)
-
+            
+            if args.wandb:
+                wandb.log({'Mean_avg_slic/train': train_avg_slic}, epoch*epoch_size)
+            else:
+                train_writer.add_scalar('Mean avg_slic', train_avg_slic, epoch)
         # evaluate on validation set and save the module( and choose the best)
         with torch.no_grad():
-            avg_slic, avg_sem  = validate(val_loader, model, epoch, val_writer, val_spixelID, val_XY_feat_stack)
+            avg_slic, avg_sem  = validate(val_loader, model, epoch, val_writer, val_spixelID, val_XY_feat_stack, epoch_size)
             if epoch % args.record_freq == 0:
-                val_writer.add_scalar('Mean avg_slic', avg_slic, epoch)
-
+                if args.wandb:
+                    wandb.log({'Mean_avg_slic/val': avg_slic}, epoch*args.epoch_size)
+                else:
+                    val_writer.add_scalar('Mean avg_slic', avg_slic, epoch)
         rec_dict = {
                 'epoch': epoch + 1,
                 'arch': args.arch,
@@ -285,8 +301,11 @@ def train(train_loader, model, optimizer, epoch, train_writer, init_spixl_map_id
             print('train Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Total_loss {5}\t Loss_sem {6}\t Loss_pos {7}\t'
                   .format(epoch, i, epoch_size, batch_time, data_time, total_loss, losses_sem, losses_pos))
 
-            train_writer.add_scalar('Train_loss', slic_loss.item(), i + epoch*epoch_size)
-            train_writer.add_scalar('learning rate',optimizer.param_groups[0]['lr'], i + epoch * epoch_size)
+            if args.wandb:
+                wandb.log({'loss/train': slic_loss.item(),'learning rate': optimizer.param_groups[0]['lr']}, i + epoch*epoch_size)
+            else:
+                train_writer.add_scalar('Train_loss', slic_loss.item(), i + epoch*epoch_size)
+                train_writer.add_scalar('learning rate',optimizer.param_groups[0]['lr'], i + epoch * epoch_size)
 
         n_iter += 1
         if i >= epoch_size:
@@ -297,35 +316,42 @@ def train(train_loader, model, optimizer, epoch, train_writer, init_spixl_map_id
 
     # =========== write information to tensorboard ===========
     if epoch % args.record_freq == 0:
-        train_writer.add_scalar('Train_loss_epoch', slic_loss.item(),  epoch )
-        train_writer.add_scalar('loss_sem',  loss_sem.item(),  epoch )
-        train_writer.add_scalar('loss_pos',  loss_pos.item(), epoch)
-
         #save image
         mean_values = torch.tensor([0.411, 0.432, 0.45], dtype=input_gpu.dtype).view(3, 1, 1)
         input_l_save = (make_grid((input + mean_values).clamp(0, 1), nrow=args.batch_size))
         label_save = make_grid(args.label_factor * label)
-
-        train_writer.add_image('Input', input_l_save, epoch)
-        train_writer.add_image('label', label_save, epoch)
-
         curr_spixl_map = update_spixl_map(init_spixl_map_idx,output)
         spixel_lab_save = make_grid(curr_spixl_map, nrow=args.batch_size)[0, :, :]
         spixel_viz, _ = get_spixel_image(input_l_save, spixel_lab_save)
-        train_writer.add_image('Spixel viz', spixel_viz, epoch)
 
-        #save associ map,  --- for debug only
-        # _, prob_idx = torch.max(output, dim=1, keepdim=True)
-        # prob_map_save = make_grid(assign2uint8(prob_idx))
-        # train_writer.add_image('assigment idx', prob_map_save, epoch)
+        if args.wandb:
+            wandb.log({'loss_epoch/train': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, i + epoch*epoch_size)
+            wandb.log({'Input/train':wandb.Image(input_l_save)}, i + epoch*epoch_size)
+            wandb.log({'label/train':wandb.Image(label_save)}, i + epoch*epoch_size)
 
-        print('==> write train step %dth to tensorboard' % i)
+            wandb.log({'spx_viz/train':wandb.Image(np.moveaxis(spixel_viz,0,-1))}, i + epoch*epoch_size)
+
+        else:
+            train_writer.add_scalar('Train_loss_epoch', slic_loss.item(),  epoch )
+            train_writer.add_scalar('loss_sem',  loss_sem.item(),  epoch )
+            train_writer.add_scalar('loss_pos',  loss_pos.item(), epoch)
+
+            train_writer.add_image('Input', input_l_save, epoch)
+            train_writer.add_image('label', label_save, epoch)
+            train_writer.add_image('Spixel viz', spixel_viz, epoch)
+
+            #save associ map,  --- for debug only
+            # _, prob_idx = torch.max(output, dim=1, keepdim=True)
+            # prob_map_save = make_grid(assign2uint8(prob_idx))
+            # train_writer.add_image('assigment idx', prob_map_save, epoch)
+
+            print('==> write train step %dth to tensorboard' % i)
 
 
     return total_loss.avg, losses_sem.avg, iteration
 
 
-def validate(val_loader, model, epoch, val_writer, init_spixl_map_idx, xy_feat):
+def validate(val_loader, model, epoch, val_writer, init_spixl_map_idx, xy_feat, epoch_size):
     global n_iter,   args,    intrinsic
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -375,13 +401,8 @@ def validate(val_loader, model, epoch, val_writer, init_spixl_map_idx, xy_feat):
 
     # =============  write result to tensorboard ======================
     if epoch % args.record_freq == 0:
-        val_writer.add_scalar('Train_loss_epoch', slic_loss.item(), epoch)
-        val_writer.add_scalar('loss_sem', loss_sem.item(), epoch)
-        val_writer.add_scalar('loss_pos', loss_pos.item(), epoch)
-
         mean_values = torch.tensor([0.411, 0.432, 0.45], dtype=input_gpu.dtype).view(3, 1, 1)
         input_l_save = (make_grid((input + mean_values).clamp(0, 1), nrow=args.batch_size))
-
 
         curr_spixl_map = update_spixl_map(init_spixl_map_idx, output)
         spixel_lab_save = make_grid(curr_spixl_map, nrow=args.batch_size)[0, :, :]
@@ -389,9 +410,22 @@ def validate(val_loader, model, epoch, val_writer, init_spixl_map_idx, xy_feat):
 
         label_save = make_grid(args.label_factor * label)
 
-        val_writer.add_image('Input', input_l_save, epoch)
-        val_writer.add_image('label', label_save, epoch)
-        val_writer.add_image('Spixel viz', spixel_viz, epoch)
+        if args.wandb:
+            wandb.log({'loss_epoch/val': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, i + epoch*epoch_size)
+            wandb.log({'Input/val':wandb.Image(input_l_save)}, epoch*epoch_size)
+            wandb.log({'label/val':wandb.Image(label_save)}, epoch*epoch_size)
+
+            wandb.log({'spx_viz/val':wandb.Image(np.moveaxis(spixel_viz,0,-1))}, i + epoch*epoch_size)
+
+        else:
+            val_writer.add_scalar('Train_loss_epoch', slic_loss.item(), epoch)
+            val_writer.add_scalar('loss_sem', loss_sem.item(), epoch)
+            val_writer.add_scalar('loss_pos', loss_pos.item(), epoch)
+
+
+            val_writer.add_image('Input', input_l_save, epoch)
+            val_writer.add_image('label', label_save, epoch)
+            val_writer.add_image('Spixel viz', spixel_viz, epoch)
 
         # --- for debug
         #     _, prob_idx = torch.max(assign, dim=1, keepdim=True)
