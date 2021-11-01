@@ -326,10 +326,9 @@ def train(train_loader, model, optimizer, epoch, train_writer, init_spixl_map_id
 
         if args.wandb:
             wandb.log({'loss_epoch/train': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, i + epoch*epoch_size)
-            wandb.log({'Input/train':wandb.Image(input_l_save)}, i + epoch*epoch_size)
-            wandb.log({'label/train':wandb.Image(label_save)}, i + epoch*epoch_size)
-
-            wandb.log({'spx_viz/train':wandb.Image(np.moveaxis(spixel_viz,0,-1))}, i + epoch*epoch_size)
+            wandb.log({'Input/train':[wandb.Image(input_l_save)]}, i + epoch*epoch_size)
+            wandb.log({'label/train':[wandb.Image(label_save)]}, i + epoch*epoch_size)
+            wandb.log({'spx_viz/train':[wandb.Image(np.moveaxis(spixel_viz,0,-1))]}, i + epoch*epoch_size)
 
         else:
             train_writer.add_scalar('Train_loss_epoch', slic_loss.item(),  epoch )
@@ -412,11 +411,13 @@ def validate(val_loader, model, epoch, val_writer, init_spixl_map_idx, xy_feat, 
 
         if args.wandb:
             wandb.log({'loss_epoch/val': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, i + epoch*epoch_size)
-            wandb.log({'Input/val':wandb.Image(input_l_save)}, epoch*epoch_size)
-            wandb.log({'label/val':wandb.Image(label_save)}, epoch*epoch_size)
+            # wandb.log({'Input/val':wandb.Image(input_l_save)}, epoch*epoch_size)
+            # wandb.log({'label/val':wandb.Image(label_save)}, epoch*epoch_size)
 
-            wandb.log({'spx_viz/val':wandb.Image(np.moveaxis(spixel_viz,0,-1))}, i + epoch*epoch_size)
-
+            # wandb.log({'spx_viz/val':wandb.Image(np.moveaxis(spixel_viz,0,-1))}, i + epoch*epoch_size)
+            wandb.log({'Input/val':[wandb.Image(input_l_save)]}, i + epoch*epoch_size)
+            wandb.log({'label/val':[wandb.Image(label_save)]}, i + epoch*epoch_size)
+            wandb.log({'spx_viz/val':[wandb.Image(np.moveaxis(spixel_viz,0,-1))]}, i + epoch*epoch_size)
         else:
             val_writer.add_scalar('Train_loss_epoch', slic_loss.item(), epoch)
             val_writer.add_scalar('loss_sem', loss_sem.item(), epoch)
