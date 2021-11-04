@@ -4,6 +4,7 @@ import shutil
 import time
 import wandb
 
+import numpy as np
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
@@ -16,7 +17,6 @@ import models
 import datasets
 from loss import compute_semantic_pos_loss
 import datetime
-from tensorboardX import SummaryWriter
 from train_util import *
 import PIL
 
@@ -59,7 +59,6 @@ parser.add_argument('--additional_step', default= 100000, help='the additional i
 
 # ============== hyper-param ====================
 parser.add_argument('--pos_weight', '-p_w', default=0.003, type=float, help='weight of the pos term')
-parser.add_argument('--downsize', default=16, type=float,help='grid cell size for superpixel training ')
 parser.add_argument('--nspx', default=256, type=int,help='number of superpixels')
 
 # ================= other setting ===================
@@ -105,12 +104,16 @@ def main():
     else:
         timestamp = ''
     save_path = os.path.abspath(args.savepath) + '/' + os.path.join(args.dataset, save_path  +  '_' + timestamp )
+    os.makedirs(save_path, exist_ok=True)
 
     if args.wandb:
         wandb.init(project='spx-fcn', dir=save_path)
         wandb.config.update(args)
-
-
+        train_writer, val_writer = None, None
+    else:
+        from tensorboardX import SummaryWriter
+        train_writer = SummaryWriter(os.path.join(save_path, 'train'))
+        val_writer = SummaryWriter(os.path.join(save_path, 'val'))
 
     # ==========  Data loading code ==============
     input_transform = transforms.Compose([
@@ -197,9 +200,6 @@ def main():
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
-    train_writer = SummaryWriter(os.path.join(save_path, 'train'))
-    val_writer = SummaryWriter(os.path.join(save_path, 'val'))
-
     # spixelID: superpixel ID for visualization,
     # XY_feat: the coordinate feature for position loss term
     spixelID, XY_feat_stack = init_spixel_grid(args)
@@ -213,7 +213,7 @@ def main():
         if epoch % args.record_freq == 0:
             
             if args.wandb:
-                wandb.log({'Mean_avg_slic/train': train_avg_slic}, epoch*epoch_size)
+                wandb.log({'Mean_avg_slic/train': train_avg_slic}, epoch)
             else:
                 train_writer.add_scalar('Mean avg_slic', train_avg_slic, epoch)
         # evaluate on validation set and save the module( and choose the best)
@@ -221,7 +221,7 @@ def main():
             avg_slic, avg_sem  = validate(val_loader, model, epoch, val_writer, val_spixelID, val_XY_feat_stack, epoch_size)
             if epoch % args.record_freq == 0:
                 if args.wandb:
-                    wandb.log({'Mean_avg_slic/val': avg_slic}, epoch*args.epoch_size)
+                    wandb.log({'Mean_avg_slic/val': avg_slic}, epoch)
                 else:
                     val_writer.add_scalar('Mean avg_slic', avg_slic, epoch)
         rec_dict = {
@@ -305,11 +305,11 @@ def train(train_loader, model, optimizer, epoch, train_writer, init_spixl_map_id
             print('train Epoch: [{0}][{1}/{2}]\t Time {3}\t Data {4}\t Total_loss {5}\t Loss_sem {6}\t Loss_pos {7}\t'
                   .format(epoch, i, epoch_size, batch_time, data_time, total_loss, losses_sem, losses_pos))
 
-            if args.wandb:
-                wandb.log({'loss/train': slic_loss.item(),'learning rate': optimizer.param_groups[0]['lr']}, i + epoch*epoch_size)
-            else:
-                train_writer.add_scalar('Train_loss', slic_loss.item(), i + epoch*epoch_size)
-                train_writer.add_scalar('learning rate',optimizer.param_groups[0]['lr'], i + epoch * epoch_size)
+            # if args.wandb:
+            #    wandb.log({'loss/train': slic_loss.item(),'learning rate': optimizer.param_groups[0]['lr']}, i + epoch*epoch_size)
+            # else:
+            #    train_writer.add_scalar('Train_loss', slic_loss.item(), i + epoch*epoch_size)
+            #    train_writer.add_scalar('learning rate',optimizer.param_groups[0]['lr'], i + epoch * epoch_size)
 
         n_iter += 1
         if i >= epoch_size:
@@ -324,21 +324,22 @@ def train(train_loader, model, optimizer, epoch, train_writer, init_spixl_map_id
         mean_values = torch.tensor([0.411, 0.432, 0.45], dtype=input_gpu.dtype).view(3, 1, 1)
         input_l_save = (make_grid((input + mean_values).clamp(0, 1), nrow=args.batch_size))
         label_save = make_grid(args.label_factor * label)
-        curr_spixl_map = update_spixl_map(init_spixl_map_idx,output)
+        curr_spixl_map = update_spixl_map(init_spixl_map_idx, output)
         spixel_lab_save = make_grid(curr_spixl_map, nrow=args.batch_size)[0, :, :]
         spixel_viz, _ = get_spixel_image(input_l_save, spixel_lab_save)
 
         if args.wandb:
-            wandb.log({'loss_epoch/train': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, i + epoch*epoch_size)
-            wandb.log({'Input/train':wandb.Image((input + mean_values).clamp(0, 1))}, i + epoch*epoch_size)
-            wandb.log({'label/train':wandb.Image(args.label_factor * label)}, i + epoch*epoch_size)
-
-            print(spixel_viz.shape)
-            # wandb.log({'spx_viz/train':wandb.Image(PIL.Image.fromarray(spixel_viz))}, i + epoch*epoch_size)
+            wandb.log({'loss_epoch/train': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, epoch)
+            wandb.log({'Input/train': wandb.Image((input + mean_values).clamp(0, 1))}, epoch)
+            wandb.log({'label/train': wandb.Image(args.label_factor * label)}, epoch)
+            spixel_viz = np.stack(  # get_spixel_image doesnt support batches so do it separately
+                [get_spixel_image((input + mean_values).clamp(0, 1)[i], curr_spixl_map[i][0])[0] for i in range(args.batch_size)]
+            )
+            wandb.log({'spx_viz/train': wandb.Image(torch.from_numpy(spixel_viz))}, epoch)
 
         else:
-            train_writer.add_scalar('Train_loss_epoch', slic_loss.item(),  epoch )
-            train_writer.add_scalar('loss_sem',  loss_sem.item(),  epoch )
+            train_writer.add_scalar('Train_loss_epoch', slic_loss.item(), epoch)
+            train_writer.add_scalar('loss_sem',  loss_sem.item(), epoch)
             train_writer.add_scalar('loss_pos',  loss_pos.item(), epoch)
 
             train_writer.add_image('Input', input_l_save, epoch)
@@ -416,12 +417,15 @@ def validate(val_loader, model, epoch, val_writer, init_spixl_map_idx, xy_feat, 
         label_save = make_grid(args.label_factor * label)
 
         if args.wandb:
-            wandb.log({'loss_epoch/val': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, (epoch+1)*epoch_size)
+            wandb.log({'loss_epoch/val': slic_loss.item(),'loss_sem': loss_sem.item(), 'loss_pos':loss_pos.item()}, epoch)
             # wandb.log({'Input/val':wandb.Image(PIL.Image.fromarray(input_l_save))}, epoch*epoch_size)
             # wandb.log({'label/val':wandb.Image(PIL.Image.fromarray(label_save))}, epoch*epoch_size)
-            # wandb.log({'spx_viz/val':wandb.Image(PIL.Image.fromarray(spixel_viz))}, epoch*epoch_size)
-            wandb.log({'Input/val':wandb.Image((input + mean_values).clamp(0, 1))}, i + epoch*epoch_size)
-            wandb.log({'label/val':wandb.Image(args.label_factor * label)}, i + epoch*epoch_size)
+            wandb.log({'Input/val':wandb.Image((input + mean_values).clamp(0, 1))}, epoch)
+            wandb.log({'label/val':wandb.Image(args.label_factor * label)}, epoch)
+            spixel_viz = np.stack(  # get_spixel_image doesnt support batches so do it separately
+                [get_spixel_image((input + mean_values).clamp(0, 1)[i], curr_spixl_map[i][0])[0] for i in range(args.batch_size)]
+            )
+            wandb.log({'spx_viz/val ': wandb.Image(torch.from_numpy(spixel_viz))}, epoch)
 
         else:
             val_writer.add_scalar('Train_loss_epoch', slic_loss.item(), epoch)
