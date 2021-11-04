@@ -6,7 +6,7 @@ import cv2
 
 import sys
 sys.path.append('./third_party/cython')
-from connectivity import enforce_connectivity
+
 
 def init_spixel_grid(args,  b_train=True):
     if b_train:
@@ -230,6 +230,8 @@ def get_spixel_image(given_img, spix_index, n_spixels = 600, b_enforce_connect =
     given_img_np = cv2.resize(given_img_np_, dsize=(w, h), interpolation=cv2.INTER_CUBIC)
 
     if b_enforce_connect:
+        from connectivity import enforce_connectivity
+
         spix_index_np = spix_index_np.astype(np.int64)
         segment_size = (given_img_np_.shape[0] * given_img_np_.shape[1]) / (int(n_spixels) * 1.0)
         min_size = int(0.06 * segment_size)
