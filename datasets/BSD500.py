@@ -54,7 +54,7 @@ def BSD_loader(path_imgs, path_label):
 
 
 def BSD500(root, transform=None, target_transform=None, val_transform=None,
-              co_transform=None, split=None):
+              co_transform=None, val_co_transform=None, split=None):
     train_list, val_list = make_dataset(root)
 
     if val_transform ==None:
@@ -65,7 +65,7 @@ def BSD500(root, transform=None, target_transform=None, val_transform=None,
                                 loader=BSD_loader, datatype = 'train')
 
     val_dataset = ListDataset(root, 'bsd500', val_list, val_transform,
-                               target_transform, flow_transforms.CenterCrop((320,320)),
+                               target_transform, val_co_transform,
                                loader=BSD_loader, datatype = 'val')
 
     return train_dataset, val_dataset

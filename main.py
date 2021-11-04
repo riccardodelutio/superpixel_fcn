@@ -125,6 +125,9 @@ def main():
         transforms.Normalize(mean=[0.411, 0.432, 0.45], std=[1, 1, 1])
     ])
 
+    val_co_transform = flow_transforms.CenterCrop((args.train_img_height ,args.train_img_width))
+
+    
     target_transform = transforms.Compose([
         flow_transforms.ArrayToTensor(),
     ])
@@ -141,7 +144,8 @@ def main():
         transform=input_transform,
         val_transform = val_input_transform,
         target_transform=target_transform,
-        co_transform=co_transform
+        co_transform=co_transform,
+        val_co_transform=val_co_transform
     )
     print('{} samples found, {} train samples and {} val samples '.format(len(val_set)+len(train_set),
                                                                            len(train_set),
