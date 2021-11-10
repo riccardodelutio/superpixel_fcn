@@ -68,7 +68,7 @@ parser.add_argument('--record_freq', '-rf', default=5, type=int,  help='record f
 parser.add_argument('--label_factor', default=5, type=int, help='constant multiplied to label index for viz.')
 parser.add_argument('--pretrained', dest='pretrained', default=None, help='path to pre-trained model')
 parser.add_argument('--no-date', action='store_true',  help='don\'t append date timestamp to folder' )
-
+parser.add_argument('--seed', default=12345, type=int)
 parser.add_argument('--wandb', help="Use Weights & Biases instead of TensorBoard", type=bool, default=False)
 
 
@@ -76,6 +76,10 @@ parser.add_argument('--wandb', help="Use Weights & Biases instead of TensorBoard
 best_EPE = -1
 n_iter = 0
 args = parser.parse_args()
+
+random.seed(args.seed)
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
 
 # !----- NOTE the current code does not support cpu training -----!
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
